@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Webcam to Pencil Drawing</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #f2f5fb;
+    color: #172554;
+    text-align: center;
+}
+
+header {
+    background: #172554;
+    color: white;
+    padding: 24px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+}
+
+main {
+    max-width: 1000px;
+    margin: 25px auto;
+    padding: 15px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+
+.panel {
+    background: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px #00000012;
+}
+
+canvas, video {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #e5e7eb;
+    border-radius: 8px;
+}
+
+video {
+    transform: scaleX(-1);
+}
+
+.buttons {
+    margin: 20px 0;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+button, .download {
+    border: 0;
+    padding: 12px 18px;
+    border-radius: 8px;
+    background: #2563eb;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+button:hover, .download:hover {
+    background: #1d4ed8;
+}
+
+#stop {
+    background: #64748b;
+}
+
+#status {
+    min-height: 24px;
+    color: #475569;
+}
+
+footer {
+    padding: 20px;
+    color: #64748b;
+}
+
+@media (max-width: 650px) {
+    .panels {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>📷 Webcam to Pencil Drawing</h1>
+    <p>Turn your live webcam into a pencil sketch!</p>
+</header>
+
+<main>
+    <div class="panels">
+        <section class="panel">
+            <h2>Original Webcam</h2>
+            <video id="video" autoplay playsinline muted></video>
+        </section>
+
+        <section class="panel">
+            <h2>Pencil Drawing</h2>
+            <canvas id="canvas" width="640" height="480"></canvas>
+        </section>
+    </div>
+
+    <div class="buttons">
+        <button id="start">Start Camera</button>
+        <button id="stop">Stop Camera</button>
+        <button id="download">Download Drawing</button>
+    </div>
+
+    <p id="status" role="status">
+        Click Start Camera and allow camera access.
+    </p>
+</main>
+
+<footer>
+    <p>Mini Project | Image Processing using JavaScript</p>
+</footer>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+const statusText = document.getElementById("status");
+
+let stream = null;
+let animationId = null;
+let running = false;
+
+async function startCamera() {
+    if (running) return;
+
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+        statusText.textContent =
+            "Camera unavailable. Open this site using HTTPS.";
+        return;
+    }
+
+    try {
+        statusText.textContent = "Requesting camera access...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user"
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        running = true;
+        statusText.textContent =
+            "Camera running! Pencil effect is active.";
+
+        drawFrame();
+    } catch (error) {
+        statusText.textContent =
+            "Camera error: " + error.message +
+            ". Allow camera access in your browser.";
+    }
+}
+
+function drawFrame() {
+    if (!running) return;
+
+    if (video.readyState >= 2 &&
+        video.videoWidth > 0) {
+
+        const width = canvas.width;
+        const height = canvas.height;
+
+        ctx.drawImage(video, 0, 0, width, height);
+
+        const frame = ctx.getImageData(
+            0, 0, width, height
+        );
+        const pixels = frame.data;
+
+        // Convert the webcam image to grayscale.
+        const gray = new Uint8ClampedArray(pixels.length);
+
+        for (let i = 0; i < pixels.length; i += 4) {
+            const value =
+                0.299 * pixels[i] +
+                0.587 * pixels[i + 1] +
+                0.114 * pixels[i + 2];
+
+            gray[i] = value;
+        }
+
+        // Invert grayscale pixels.
+        const inverted = new Uint8ClampedArray(
+            width * height
+        );
+
+        for (let i = 0; i < inverted.length; i++) {
+            inverted[i] = 255 - gray[i * 4];
+        }
+
+        // Blur the inverted image.
+        const blurred = new Uint8ClampedArray(
+            width * height
+        );
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                let sum = 0;
+                let count = 0;
+
+                for (let dy = -4; dy <= 4; dy += 2) {
+                    for (let dx = -4; dx <= 4; dx += 2) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+
+                        if (nx >= 0 && nx < width &&
+                            ny >= 0 && ny < height) {
+                            sum += inverted[ny * width + nx];
+                            count++;
+                        }
+                    }
+                }
+
+                blurred[y * width + x] = sum / count;
+            }
+        }
+
+        // Color-dodge blend creates a pencil-like effect.
+        for (let i = 0; i < width * height; i++) {
+            const originalGray = gray[i * 4];
+            const blurValue = blurred[i];
+
+            const result = Math.min(
+                255,
+                originalGray * 255 /
+                Math.max(1, 255 - blurValue)
+            );
+
+            const p = i * 4;
+
+            pixels[p] = result;
+            pixels[p + 1] = result;
+            pixels[p + 2] = result;
+            pixels[p + 3] = 255;
+        }
+
+        ctx.putImageData(frame, 0, 0);
+    }
+
+    animationId = requestAnimationFrame(drawFrame);
+}
+
+function stopCamera() {
+    running = false;
+
+    if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    statusText.textContent = "Camera stopped.";
+}
+
+function downloadDrawing() {
+    canvas.toBlob(blob => {
+        if (!blob) {
+            statusText.textContent =
+                "Could not create the image. Try again.";
+            return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "pencil-drawing.png";
+        link.click();
+
+        URL.revokeObjectURL(url);
+    }, "image/png");
+}
+
+document.getElementById("start").addEventListener(
+    "click", startCamera
+);
+
+document.getElementById("stop").addEventListener(
+    "click", stopCamera
+);
+
+document.getElementById("download").addEventListener(
+    "click", downloadDrawing
+);
+
+window.addEventListener("pagehide", stopCamera);
+</script>
+
+</body>
+</html>
