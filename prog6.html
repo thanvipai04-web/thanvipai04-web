@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Webcam Pencil Portrait</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #edf0f2;
+    color: #202638;
+}
+
+header {
+    background: #241812;
+    color: white;
+    text-align: center;
+    padding: 25px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+    font-size: 30px;
+}
+
+header p {
+    margin: 0;
+    font-size: 16px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 25px auto;
+    padding: 15px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+}
+
+.panel {
+    background: white;
+    border-radius: 13px;
+    padding: 15px;
+    box-shadow: 0 4px 15px #00000012;
+}
+
+.panel h2 {
+    text-align: center;
+    margin: 8px 0 18px;
+}
+
+.preview {
+    background: #f6f5f2;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+}
+
+video, canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+}
+
+button {
+    border: 0;
+    border-radius: 7px;
+    padding: 12px 18px;
+    color: white;
+    background: #159bd0;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #0879aa;
+}
+
+button:disabled {
+    background: #a5adb2;
+    cursor: not-allowed;
+}
+
+.settings {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 25px;
+    margin-top: 20px;
+}
+
+.settings label {
+    font-size: 14px;
+}
+
+.settings input {
+    display: block;
+    width: 150px;
+    margin-top: 8px;
+}
+
+#status {
+    text-align: center;
+    color: #555;
+    margin-top: 20px;
+    overflow-wrap: anywhere;
+}
+
+@media(max-width: 700px) {
+    .panels {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 24px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>✏️ Webcam to Pencil Drawing</h1>
+    <p>Turn your live webcam into a realistic pencil portrait!</p>
+</header>
+
+<main class="container">
+
+    <div class="panels">
+
+        <section class="panel">
+            <h2>Original Webcam</h2>
+            <div class="preview">
+                <video id="video" autoplay muted playsinline></video>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Pencil Drawing</h2>
+            <div class="preview">
+                <canvas id="sketch"
+                        width="480" height="360"></canvas>
+            </div>
+        </section>
+
+    </div>
+
+    <div class="buttons">
+        <button id="start">Start Camera</button>
+        <button id="stop" disabled>Stop Camera</button>
+        <button id="download">Download Drawing</button>
+    </div>
+
+    <div class="settings">
+        <label>
+            Pencil Detail
+            <input type="range" id="detail"
+                   min="1" max="5" value="3">
+        </label>
+
+        <label>
+            Shading Darkness
+            <input type="range" id="darkness"
+                   min="0.7" max="1.8" step="0.1" value="1.2">
+        </label>
+    </div>
+
+    <p id="status">Click Start Camera to begin.</p>
+
+</main>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("sketch");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const startBtn = document.getElementById("start");
+const stopBtn = document.getElementById("stop");
+const downloadBtn = document.getElementById("download");
+const statusText = document.getElementById("status");
+
+const W = canvas.width;
+const H = canvas.height;
+
+let stream = null;
+let running = false;
+let busy = false;
+let lastFrame = 0;
+
+const source = document.createElement("canvas");
+source.width = W;
+source.height = H;
+
+const sourceCtx = source.getContext("2d", {
+    willReadFrequently: true
+});
+
+const grayCanvas = document.createElement("canvas");
+grayCanvas.width = W;
+grayCanvas.height = H;
+
+const grayCtx = grayCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const blurCanvas = document.createElement("canvas");
+blurCanvas.width = W;
+blurCanvas.height = H;
+
+const blurCtx = blurCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+// Convert a live webcam frame into a pencil sketch
+function makePencilSketch() {
+    if (!running) return;
+
+    if (video.readyState < 2 || busy) {
+        requestAnimationFrame(makePencilSketch);
+        return;
+    }
+
+    const now = performance.now();
+
+    // Limit processing to improve performance
+    if (now - lastFrame < 100) {
+        requestAnimationFrame(makePencilSketch);
+        return;
+    }
+
+    lastFrame = now;
+    busy = true;
+
+    try {
+        // Step 1: Capture current webcam frame
+        sourceCtx.drawImage(video, 0, 0, W, H);
+
+        const image = sourceCtx.getImageData(0, 0, W, H);
+        const data = image.data;
+        const count = W * H;
+
+        const gray = new Float32Array(count);
+        const inverted = grayCtx.createImageData(W, H);
+        const inv = inverted.data;
+
+        // Step 2: Convert to grayscale and invert
+        for (let p = 0, i = 0; p < count; p++, i += 4) {
+            const value =
+                0.299 * data[i] +
+                0.587 * data[i + 1] +
+                0.114 * data[i + 2];
+
+            gray[p] = value;
+
+            const v = 255 - value;
+            inv[i] = v;
+            inv[i + 1] = v;
+            inv[i + 2] = v;
+            inv[i + 3] = 255;
+        }
+
+        grayCtx.putImageData(inverted, 0, 0);
+
+        // Step 3: Blur inverted image for smooth shading
+        const detail = Number(
+            document.getElementById("detail").value
+        );
+
+        blurCtx.clearRect(0, 0, W, H);
+        blurCtx.filter = "blur(" + (6 - detail) + "px)";
+        blurCtx.drawImage(grayCanvas, 0, 0);
+        blurCtx.filter = "none";
+
+        const blurred = blurCtx.getImageData(
+            0, 0, W, H
+        ).data;
+
+        const result = ctx.createImageData(W, H);
+        const out = result.data;
+
+        const darkness = Number(
+            document.getElementById("darkness").value
+        );
+
+        // Step 4: Blend to produce pencil shading
+        for (let p = 0, i = 0; p < count; p++, i += 4) {
+            const b = blurred[i];
+
+            let shade = b >= 255
+                ? 255
+                : Math.min(255, gray[p] * 255 / (255 - b));
+
+            shade = 255 - (255 - shade) * darkness;
+            shade = Math.max(0, Math.min(255, shade));
+
+            out[i] = shade;
+            out[i + 1] = shade;
+            out[i + 2] = shade;
+            out[i + 3] = 255;
+        }
+
+        // Step 5: Detect edges around eyes, hair and face
+        for (let y = 1; y < H - 1; y++) {
+            for (let x = 1; x < W - 1; x++) {
+                const p = y * W + x;
+
+                const gx =
+                    -gray[p - W - 1] + gray[p - W + 1]
+                    - 2 * gray[p - 1] + 2 * gray[p + 1]
+                    - gray[p + W - 1] + gray[p + W + 1];
+
+                const gy =
+                    -gray[p - W - 1] - 2 * gray[p - W]
+                    - gray[p - W + 1]
+                    + gray[p + W - 1] + 2 * gray[p + W]
+                    + gray[p + W + 1];
+
+                const edge = Math.sqrt(gx * gx + gy * gy);
+
+                if (edge > 95) {
+                    const i = p * 4;
+                    const strength = Math.min(
+                        0.65, (edge - 95) / 350
+                    );
+
+                    out[i] *= 1 - strength;
+                    out[i + 1] *= 1 - strength;
+                    out[i + 2] *= 1 - strength;
+                }
+            }
+        }
+
+        // Step 6: Add subtle graphite texture
+        for (let p = 0, i = 0; p < count; p++, i += 4) {
+            const x = p % W;
+            const y = Math.floor(p / W);
+            const grain = ((x * 17 + y * 31) % 5) - 2;
+
+            const v = Math.max(
+                0, Math.min(255, out[i] + grain)
+            );
+
+            out[i] = v;
+            out[i + 1] = v;
+            out[i + 2] = v;
+        }
+
+        // Step 7: Show final drawing
+        ctx.putImageData(result, 0, 0);
+
+    } catch (error) {
+        statusText.textContent = "Unable to process webcam frame.";
+    } finally {
+        busy = false;
+    }
+
+    if (running) {
+        requestAnimationFrame(makePencilSketch);
+    }
+}
+
+// Start live webcam
+startBtn.addEventListener("click", async () => {
+    try {
+        statusText.textContent = "Requesting camera permission...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user",
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        statusText.textContent = "Live pencil drawing is running.";
+        makePencilSketch();
+
+    } catch (error) {
+        statusText.textContent =
+            "Camera unavailable. Allow camera access and use HTTPS or localhost.";
+    }
+});
+
+// Stop webcam
+stopBtn.addEventListener("click", () => {
+    running = false;
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    statusText.textContent = "Camera stopped.";
+});
+
+// Download the current pencil drawing
+downloadBtn.addEventListener("click", () => {
+    canvas.toBlob(blob => {
+        if (!blob) {
+            statusText.textContent = "No drawing available yet.";
+            return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "live-pencil-portrait.png";
+        link.click();
+
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, "image/png");
+});
+
+// Update sketch when settings change
+document.getElementById("detail").addEventListener("input", () => {
+    lastFrame = 0;
+});
+
+document.getElementById("darkness").addEventListener("input", () => {
+    lastFrame = 0;
+});
+</script>
+
+</body>
+</html>
