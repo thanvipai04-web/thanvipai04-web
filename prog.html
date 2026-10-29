@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pencil Sketch Art</title>
+<style>
+* {
+    box-sizing: border-box;
+}
+body {
+    margin: 0;
+    padding: 20px;
+    background: #d8d4cc;
+    font-family: Georgia, serif;
+    text-align: center;
+    color: #333;
+}
+header {
+    padding: 15px;
+}
+h1 {
+    font-size: 30px;
+    font-style: italic;
+    letter-spacing: 2px;
+}
+.subtitle {
+    color: #666;
+    font-size: 15px;
+}
+.paper {
+    max-width: 520px;
+    margin: 20px auto;
+    padding: 25px;
+    background: #fffdf6;
+    border: 1px solid #aaa;
+    box-shadow: 5px 7px 18px #999;
+    background-image: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        #eeeeee 4px
+    );
+}
+canvas {
+    width: 100%;
+    max-width: 440px;
+    height: auto;
+    border: 1px solid #ccc;
+    background: #fffefa;
+    cursor: crosshair;
+    touch-action: none;
+}
+.tools {
+    margin: 15px auto;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+button {
+    padding: 10px 16px;
+    background: #444;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+button:hover {
+    background: #777;
+}
+input[type="range"] {
+    width: 100px;
+}
+label {
+    font-size: 14px;
+}
+footer {
+    color: #666;
+    margin-top: 20px;
+    font-size: 14px;
+}
+</style>
+</head>
+<body>
+<header>
+    <h1>Pencil Sketching</h1>
+    <p class="subtitle">Every line tells a story ✏️</p>
+</header>
+
+<div class="paper">
+    <h2>My Art Book</h2>
+    <canvas id="canvas" width="440" height="440"></canvas>
+
+    <div class="tools">
+        <button id="draw">Draw</button>
+        <button id="erase">Erase</button>
+        <button id="clear">Clear</button>
+        <button id="save">Save Sketch</button>
+    </div>
+
+    <div class="tools">
+        <label>
+            Pencil size
+            <input type="range" id="size"
+            min="1" max="12" value="2">
+        </label>
+    </div>
+
+    <p>Draw your own beautiful pencil sketch!</p>
+</div>
+
+<footer>
+    <p>Created with creativity and love.</p>
+</footer>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const size = document.getElementById("size");
+
+let drawing = false;
+let erasing = false;
+
+function setup() {
+    ctx.fillStyle = "#fffefa";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawGirl();
+}
+
+function pencilLine(x1, y1, x2, y2) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.strokeStyle = erasing ? "#fffefa" : "#333";
+    ctx.lineWidth = erasing ? 18 : size.value;
+    ctx.lineCap = "round";
+    ctx.stroke();
+}
+
+function drawGirl() {
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 2;
+
+    // Draw hair bun
+    ctx.beginPath();
+    ctx.ellipse(170, 125, 65, 75, -0.4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Draw head outline
+    ctx.beginPath();
+    ctx.moveTo(205, 105);
+    ctx.quadraticCurveTo(280, 100, 285, 175);
+    ctx.quadraticCurveTo(275, 235, 235, 245);
+    ctx.stroke();
+
+    // Draw neck
+    ctx.beginPath();
+    ctx.moveTo(220, 235);
+    ctx.lineTo(220, 285);
+    ctx.moveTo(250, 235);
+    ctx.lineTo(260, 280);
+    ctx.stroke();
+
+    // Draw eye
+    ctx.beginPath();
+    ctx.moveTo(255, 160);
+    ctx.quadraticCurveTo(270, 150, 278, 161);
+    ctx.stroke();
+
+    // Draw nose
+    ctx.beginPath();
+    ctx.moveTo(282, 175);
+    ctx.lineTo(293, 190);
+    ctx.lineTo(282, 194);
+    ctx.stroke();
+
+    // Draw lips
+    ctx.beginPath();
+    ctx.moveTo(278, 207);
+    ctx.quadraticCurveTo(288, 212, 296, 205);
+    ctx.stroke();
+
+    // Draw shoulder and dress
+    ctx.beginPath();
+    ctx.moveTo(220, 280);
+    ctx.quadraticCurveTo(150, 280, 105, 335);
+    ctx.lineTo(80, 420);
+    ctx.moveTo(260, 280);
+    ctx.quadraticCurveTo(320, 300, 350, 420);
+    ctx.stroke();
+
+    // Draw hair strands
+    for (let i = 0; i < 12; i++) {
+        ctx.beginPath();
+        ctx.moveTo(155 + i * 5, 75);
+        ctx.quadraticCurveTo(
+            190 + i * 4, 130,
+            215 + i * 3, 190
+        );
+        ctx.strokeStyle = "#777";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    // Draw flower in hair
+    for (let i = 0; i < 5; i++) {
+        const angle = i * Math.PI * 2 / 5;
+        const x = 145 + Math.cos(angle) * 15;
+        const y = 125 + Math.sin(angle) * 15;
+        ctx.beginPath();
+        ctx.arc(x, y, 8, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    ctx.beginPath();
+    ctx.arc(145, 125, 4, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Add sketch shading
+    for (let i = 0; i < 20; i++) {
+        ctx.beginPath();
+        ctx.moveTo(110 + i * 4, 330);
+        ctx.lineTo(125 + i * 4, 345);
+        ctx.strokeStyle = "#bbb";
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+    }
+}
+
+function getPosition(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (event.clientX - rect.left)
+            * canvas.width / rect.width,
+        y: (event.clientY - rect.top)
+            * canvas.height / rect.height
+    };
+}
+
+canvas.addEventListener("pointerdown", function(event) {
+    drawing = true;
+    canvas.setPointerCapture(event.pointerId);
+    const pos = getPosition(event);
+    pencilLine(pos.x, pos.y, pos.x, pos.y);
+});
+
+canvas.addEventListener("pointermove", function(event) {
+    if (!drawing) return;
+    const pos = getPosition(event);
+    pencilLine(
+        lastX, lastY, pos.x, pos.y
+    );
+    lastX = pos.x;
+    lastY = pos.y;
+});
+
+let lastX = 0;
+let lastY = 0;
+
+canvas.addEventListener("pointerdown", function(event) {
+    const pos = getPosition(event);
+    lastX = pos.x;
+    lastY = pos.y;
+});
+
+canvas.addEventListener("pointerup", function() {
+    drawing = false;
+});
+
+canvas.addEventListener("pointercancel", function() {
+    drawing = false;
+});
+
+document.getElementById("draw").onclick = function() {
+    erasing = false;
+};
+
+document.getElementById("erase").onclick = function() {
+    erasing = true;
+};
+
+document.getElementById("clear").onclick = function() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setup();
+};
+
+document.getElementById("save").onclick = function() {
+    const link = document.createElement("a");
+    link.download = "my-pencil-sketch.png";
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+};
+
+setup();
+</script>
+</body>
+</html>
