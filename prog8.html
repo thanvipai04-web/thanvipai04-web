@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realistic Pencil Portrait</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #edf0f2;
+    color: #202630;
+}
+
+header {
+    background: #241812;
+    color: white;
+    text-align: center;
+    padding: 24px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+}
+
+.container {
+    max-width: 1200px;
+    margin: auto;
+    padding: 20px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.panel {
+    background: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px #00000012;
+}
+
+.panel h2 {
+    text-align: center;
+}
+
+.preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #faf9f6;
+    border: 1px solid #ddd;
+    overflow: hidden;
+    border-radius: 7px;
+}
+
+video, canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+button {
+    background: #159bd0;
+    color: white;
+    padding: 12px 18px;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+}
+
+button:disabled {
+    background: #9ca7ad;
+}
+
+.settings {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+}
+
+.settings input {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+}
+
+#status {
+    text-align: center;
+    color: #555;
+}
+
+@media(max-width:700px) {
+    .panels, .settings {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>✏️ Webcam to Pencil Drawing</h1>
+    <p>Detailed graphite shading with darker hair</p>
+</header>
+
+<main class="container">
+
+<div class="panels">
+
+    <section class="panel">
+        <h2>Original Webcam</h2>
+        <div class="preview">
+            <video id="video" autoplay muted playsinline></video>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Pencil Drawing</h2>
+        <div class="preview">
+            <canvas id="sketch" width="480" height="360"></canvas>
+        </div>
+    </section>
+
+</div>
+
+<div class="buttons">
+    <button id="start">Start Camera</button>
+    <button id="stop" disabled>Stop Camera</button>
+    <button id="download">Download Drawing</button>
+</div>
+
+<div class="settings">
+    <label>
+        Pencil Detail
+        <input id="detail" type="range"
+               min="1" max="5" value="4">
+    </label>
+
+    <label>
+        Hair Darkness
+        <input id="hair" type="range"
+               min="0" max="1" step="0.05" value="0.65">
+    </label>
+
+    <label>
+        Pencil Contrast
+        <input id="contrast" type="range"
+               min="0.5" max="1.5" step="0.1" value="0.8">
+    </label>
+</div>
+
+<p id="status">Click Start Camera to begin.</p>
+
+</main>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("sketch");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const W = canvas.width;
+const H = canvas.height;
+
+const source = document.createElement("canvas");
+source.width = W;
+source.height = H;
+
+const sctx = source.getContext("2d", {
+    willReadFrequently: true
+});
+
+const invertedCanvas = document.createElement("canvas");
+invertedCanvas.width = W;
+invertedCanvas.height = H;
+
+const ictx = invertedCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const blurCanvas = document.createElement("canvas");
+blurCanvas.width = W;
+blurCanvas.height = H;
+
+const bctx = blurCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const startBtn = document.getElementById("start");
+const stopBtn = document.getElementById("stop");
+const statusText = document.getElementById("status");
+
+let stream = null;
+let running = false;
+let busy = false;
+let lastFrame = 0;
+let hasDrawing = false;
+
+function drawPencil() {
+    if (!running) return;
+
+    if (video.readyState < 2 || busy ||
+        performance.now() - lastFrame < 100) {
+        requestAnimationFrame(drawPencil);
+        return;
+    }
+
+    lastFrame = performance.now();
+    busy = true;
+
+    try {
+        sctx.drawImage(video, 0, 0, W, H);
+
+        const image = sctx.getImageData(0, 0, W, H);
+        const pixels = image.data;
+        const total = W * H;
+        const gray = new Float32Array(total);
+
+        const inverted = ictx.createImageData(W, H);
+        const inv = inverted.data;
+
+        const detail = Number(
+            document.getElementById("detail").value
+        );
+
+        const hairDarkness = Number(
+            document.getElementById("hair").value
+        );
+
+        const contrast = Number(
+            document.getElementById("contrast").value
+        );
+
+        // 1. Convert webcam image to grayscale
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const g =
+                0.299 * pixels[i] +
+                0.587 * pixels[i + 1] +
+                0.114 * pixels[i + 2];
+
+            gray[p] = g;
+
+            const value = 255 - g;
+            inv[i] = value;
+            inv[i + 1] = value;
+            inv[i + 2] = value;
+            inv[i + 3] = 255;
+        }
+
+        ictx.putImageData(inverted, 0, 0);
+
+        // 2. Smooth shading
+        bctx.clearRect(0, 0, W, H);
+        bctx.filter = "blur(" + (7 - detail) + "px)";
+        bctx.drawImage(invertedCanvas, 0, 0);
+        bctx.filter = "none";
+
+        const blurred = bctx.getImageData(
+            0, 0, W, H
+        ).data;
+
+        const output = ctx.createImageData(W, H);
+        const out = output.data;
+
+        // 3. Produce light graphite shades
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const b = blurred[i];
+
+            let shade = b >= 254.5
+                ? 255
+                : Math.min(255, gray[p] * 255 / (255 - b));
+
+            // Gentle shading keeps the face lighter
+            shade = 255 - (255 - shade) * 0.42;
+
+            // Adjust contrast
+            shade = 190 + (shade - 190) * contrast * 0.65;
+
+            shade = Math.max(0, Math.min(255, shade));
+
+            out[i] = shade;
+            out[i + 1] = shade;
+            out[i + 2] = shade;
+            out[i + 3] = 255;
+        }
+
+        // 4. Deepen existing dark areas, including hair
+        // This darkens already dark pixels, not hair alone.
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const original = gray[p];
+
+            if (original < 110) {
+                const amount = (110 - original) / 110;
+                const strength = hairDarkness * amount * 0.55;
+                const shade = out[i] * (1 - strength);
+
+                out[i] = shade;
+                out[i + 1] = shade;
+                out[i + 2] = shade;
+            }
+        }
+
+        // 5. Fine outlines for eyes, nose, lips and hair
+        const edgeStrength = 0.12 + detail * 0.025;
+
+        for (let y = 1; y < H - 1; y++) {
+            for (let x = 1; x < W - 1; x++) {
+                const p = y * W + x;
+
+                const gx =
+                    -gray[p-W-1] + gray[p-W+1]
+                    - 2 * gray[p-1] + 2 * gray[p+1]
+                    - gray[p+W-1] + gray[p+W+1];
+
+                const gy =
+                    -gray[p-W-1] - 2 * gray[p-W]
+                    - gray[p-W+1]
+                    + gray[p+W-1] + 2 * gray[p+W]
+                    + gray[p+W+1];
+
+                const edge = Math.sqrt(gx * gx + gy * gy);
+
+                if (edge > 55) {
+                    const i = p * 4;
+                    const strength = Math.min(
+                        edgeStrength, (edge - 55) / 600
+                    );
+
+                    out[i] *= 1 - strength;
+                    out[i + 1] *= 1 - strength;
+                    out[i + 2] *= 1 - strength;
+                }
+            }
+        }
+
+        // 6. Add a subtle pencil-paper texture
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const x = p % W;
+            const y = Math.floor(p / W);
+            const grain = ((x * 17 + y * 31) % 5) - 2;
+
+            const value = Math.max(
+                0, Math.min(255, out[i] + grain)
+            );
+
+            out[i] = value;
+            out[i + 1] = value;
+            out[i + 2] = value;
+        }
+
+        ctx.putImageData(output, 0, 0);
+        hasDrawing = true;
+
+    } catch (error) {
+        statusText.textContent = "Unable to process webcam image.";
+    } finally {
+        busy = false;
+    }
+
+    if (running) requestAnimationFrame(drawPencil);
+}
+
+// 7. Start camera
+startBtn.addEventListener("click", async () => {
+    try {
+        statusText.textContent = "Requesting camera permission...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user",
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        running = true;
+        hasDrawing = false;
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        statusText.textContent = "Live pencil portrait is running.";
+        drawPencil();
+
+    } catch (error) {
+        statusText.textContent =
+            "Allow camera access. Use HTTPS or localhost.";
+    }
+});
+
+// 8. Stop camera
+stopBtn.addEventListener("click", () => {
+    running = false;
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    statusText.textContent = "Camera stopped.";
+});
+
+// 9. Download drawing
+document.getElementById("download").addEventListener(
+    "click", () => {
+        if (!hasDrawing) {
+            statusText.textContent =
+                "Start the camera before downloading.";
+            return;
+        }
+
+        canvas.toBlob(blob => {
+            if (!blob) return;
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+
+            link.href = url;
+            link.download = "realistic-pencil-portrait.png";
+            link.click();
+
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, "image/png");
+    }
+);
+
+// Update effect when sliders change
+["detail", "hair", "contrast"].forEach(id => {
+    document.getElementById(id).addEventListener("input", () => {
+        lastFrame = 0;
+    });
+});
+</script>
+
+</body>
+</html>
