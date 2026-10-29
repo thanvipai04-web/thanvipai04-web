@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pencil Detection</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #edf0f2;
+    color: #182033;
+}
+
+header {
+    background: #21150f;
+    color: white;
+    text-align: center;
+    padding: 25px 10px;
+}
+
+header h1 {
+    font-size: 34px;
+    margin: 0 0 10px;
+}
+
+header p {
+    font-size: 18px;
+    margin: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 30px auto;
+    padding: 15px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 25px;
+}
+
+.panel {
+    background: white;
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 5px 18px #0001;
+}
+
+h2 {
+    text-align: center;
+}
+
+.preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #fafafa;
+    border: 1px solid #ddd;
+    overflow: hidden;
+    border-radius: 8px;
+}
+
+video, canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 25px;
+}
+
+button {
+    border: 0;
+    border-radius: 8px;
+    padding: 13px 20px;
+    color: white;
+    background: #159bd0;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #0879aa;
+}
+
+button:disabled {
+    background: #9ba8b0;
+}
+
+#status {
+    text-align: center;
+    color: #555;
+    margin-top: 20px;
+}
+
+@media (max-width: 700px) {
+    .panels {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 25px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>📷 Webcam to Pencil Drawing</h1>
+    <p>Turn your live webcam into a pencil sketch!</p>
+</header>
+
+<div class="container">
+
+    <div class="panels">
+
+        <section class="panel">
+            <h2>Original Webcam</h2>
+            <div class="preview">
+                <video id="video" autoplay muted playsinline></video>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Pencil Drawing</h2>
+            <div class="preview">
+                <canvas id="canvas"
+                        width="640"
+                        height="480"></canvas>
+            </div>
+        </section>
+
+    </div>
+
+    <div class="buttons">
+        <button id="start">Start Camera</button>
+        <button id="stop" disabled>Stop Camera</button>
+        <button id="download">Download Drawing</button>
+    </div>
+
+    <p id="status">Click Start Camera to begin.</p>
+
+</div>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const startButton = document.getElementById("start");
+const stopButton = document.getElementById("stop");
+const downloadButton = document.getElementById("download");
+const status = document.getElementById("status");
+
+const W = canvas.width;
+const H = canvas.height;
+
+let stream = null;
+let animation = null;
+
+const source = document.createElement("canvas");
+source.width = W;
+source.height = H;
+
+const sourceCtx = source.getContext("2d", {
+    willReadFrequently: true
+});
+
+const grayCanvas = document.createElement("canvas");
+grayCanvas.width = W;
+grayCanvas.height = H;
+
+const grayCtx = grayCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+// Create a detailed pencil sketch
+function pencilDetection() {
+
+    if (video.readyState < 2) {
+        animation = requestAnimationFrame(pencilDetection);
+        return;
+    }
+
+    // Draw original webcam image
+    sourceCtx.drawImage(video, 0, 0, W, H);
+
+    const original = sourceCtx.getImageData(0, 0, W, H);
+    const data = original.data;
+
+    const inverted = grayCtx.createImageData(W, H);
+    const inv = inverted.data;
+
+    // Step 1: Grayscale and inversion
+    for (let i = 0; i < data.length; i += 4) {
+
+        const gray =
+            0.299 * data[i] +
+            0.587 * data[i + 1] +
+            0.114 * data[i + 2];
+
+        const value = 255 - gray;
+
+        inv[i] = value;
+        inv[i + 1] = value;
+        inv[i + 2] = value;
+        inv[i + 3] = 255;
+    }
+
+    grayCtx.putImageData(inverted, 0, 0);
+
+    // Step 2: Blur inverted image for soft shading
+    const blurredCanvas = document.createElement("canvas");
+    blurredCanvas.width = W;
+    blurredCanvas.height = H;
+
+    const blurredCtx = blurredCanvas.getContext("2d");
+
+    blurredCtx.filter = "blur(6px)";
+    blurredCtx.drawImage(grayCanvas, 0, 0);
+    blurredCtx.filter = "none";
+
+    const blurred = blurredCtx.getImageData(
+        0, 0, W, H
+    ).data;
+
+    const output = ctx.createImageData(W, H);
+    const out = output.data;
+
+    // Step 3: Color-dodge blending
+    for (let i = 0; i < data.length; i += 4) {
+
+        const gray =
+            0.299 * data[i] +
+            0.587 * data[i + 1] +
+            0.114 * data[i + 2];
+
+        const b = blurred[i];
+
+        let shade = b >= 255
+            ? 255
+            : Math.min(255, gray * 255 / (255 - b));
+
+        out[i] = shade;
+        out[i + 1] = shade;
+        out[i + 2] = shade;
+        out[i + 3] = 255;
+    }
+
+    // Step 4: Add stronger pencil outlines
+    for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+
+            const p = (y * W + x) * 4;
+
+            const left = (y * W + x - 1) * 4;
+            const right = (y * W + x + 1) * 4;
+            const up = ((y - 1) * W + x) * 4;
+            const down = ((y + 1) * W + x) * 4;
+
+            const gx = Math.abs(
+                data[right] - data[left]
+            );
+
+            const gy = Math.abs(
+                data[down] - data[up]
+            );
+
+            const edge = gx + gy;
+
+            if (edge > 65) {
+                out[p] *= 0.45;
+                out[p + 1] *= 0.45;
+                out[p + 2] *= 0.45;
+            }
+        }
+    }
+
+    // Step 5: Display final drawing
+    ctx.putImageData(output, 0, 0);
+
+    animation = requestAnimationFrame(pencilDetection);
+}
+
+// Start camera
+startButton.addEventListener("click", async () => {
+
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        startButton.disabled = true;
+        stopButton.disabled = false;
+        status.textContent = "Pencil detection is running.";
+
+        cancelAnimationFrame(animation);
+        pencilDetection();
+
+    } catch (error) {
+        status.textContent =
+            "Camera access denied. Allow camera permission in your browser.";
+    }
+});
+
+// Stop camera
+stopButton.addEventListener("click", () => {
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    cancelAnimationFrame(animation);
+
+    startButton.disabled = false;
+    stopButton.disabled = true;
+    status.textContent = "Camera stopped.";
+});
+
+// Download drawing
+downloadButton.addEventListener("click", () => {
+
+    canvas.toBlob(blob => {
+
+        if (!blob) return;
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = url;
+        link.download = "pencil-sketch.png";
+        link.click();
+
+        URL.revokeObjectURL(url);
+
+    }, "image/png");
+});
+</script>
+
+</body>
+</html>
