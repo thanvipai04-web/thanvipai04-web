@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realistic Live Pencil Sketch</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #e9edf0;
+    color: #202630;
+}
+
+header {
+    background: #211610;
+    color: white;
+    text-align: center;
+    padding: 24px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+    font-size: 30px;
+}
+
+header p { margin: 0; }
+
+.container {
+    max-width: 1200px;
+    margin: 25px auto;
+    padding: 15px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+}
+
+.panel {
+    background: white;
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: 0 4px 16px #00000012;
+}
+
+.panel h2 {
+    text-align: center;
+    margin: 8px 0 16px;
+}
+
+.preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #f8f7f4;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    overflow: hidden;
+}
+
+video, canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+}
+
+button {
+    border: 0;
+    border-radius: 7px;
+    padding: 12px 18px;
+    background: #159bd0;
+    color: white;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+button:hover { background: #0879aa; }
+button:disabled { background: #9ca7ad; }
+
+.settings {
+    background: white;
+    border-radius: 12px;
+    padding: 18px;
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+}
+
+.settings label {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.settings input {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    accent-color: #159bd0;
+}
+
+#status {
+    text-align: center;
+    color: #555;
+    margin-top: 18px;
+}
+
+@media(max-width: 700px) {
+    .panels { grid-template-columns: 1fr; }
+    .settings { grid-template-columns: 1fr; }
+    header h1 { font-size: 24px; }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>✏️ Live Webcam Pencil Drawing</h1>
+    <p>Realistic graphite shading, dark hair and fine details</p>
+</header>
+
+<main class="container">
+
+    <div class="panels">
+        <section class="panel">
+            <h2>Original Webcam</h2>
+            <div class="preview">
+                <video id="video" autoplay muted playsinline></video>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Pencil Drawing</h2>
+            <div class="preview">
+                <canvas id="sketch" width="480" height="360"></canvas>
+            </div>
+        </section>
+    </div>
+
+    <div class="buttons">
+        <button id="start">Start Camera</button>
+        <button id="stop" disabled>Stop Camera</button>
+        <button id="download">Download Drawing</button>
+    </div>
+
+    <div class="settings">
+        <label>
+            Pencil Detail
+            <input type="range" id="detail"
+                   min="1" max="5" value="4">
+        </label>
+
+        <label>
+            Dark Shading
+            <input type="range" id="darkness"
+                   min="0.8" max="2.2" step="0.1" value="1.5">
+        </label>
+
+        <label>
+            Pencil Contrast
+            <input type="range" id="contrast"
+                   min="0.8" max="2" step="0.1" value="1.3">
+        </label>
+    </div>
+
+    <p id="status">Click Start Camera and allow camera access.</p>
+
+</main>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("sketch");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const W = canvas.width;
+const H = canvas.height;
+
+const source = document.createElement("canvas");
+source.width = W;
+source.height = H;
+
+const sctx = source.getContext("2d", {
+    willReadFrequently: true
+});
+
+const invertedCanvas = document.createElement("canvas");
+invertedCanvas.width = W;
+invertedCanvas.height = H;
+
+const ictx = invertedCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const blurCanvas = document.createElement("canvas");
+blurCanvas.width = W;
+blurCanvas.height = H;
+
+const bctx = blurCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const startBtn = document.getElementById("start");
+const stopBtn = document.getElementById("stop");
+const statusText = document.getElementById("status");
+
+let stream = null;
+let running = false;
+let frameBusy = false;
+let lastFrame = 0;
+let latestFrame = null;
+
+// Convert image to detailed graphite drawing
+function drawPencil() {
+    if (!running) return;
+
+    if (video.readyState < 2 || frameBusy) {
+        requestAnimationFrame(drawPencil);
+        return;
+    }
+
+    // Limit work on slower computers
+    if (performance.now() - lastFrame < 100) {
+        requestAnimationFrame(drawPencil);
+        return;
+    }
+
+    lastFrame = performance.now();
+    frameBusy = true;
+
+    try {
+        sctx.drawImage(video, 0, 0, W, H);
+
+        const image = sctx.getImageData(0, 0, W, H);
+        const pixels = image.data;
+        const total = W * H;
+        const gray = new Float32Array(total);
+
+        const invImage = ictx.createImageData(W, H);
+        const inv = invImage.data;
+
+        const detail = Number(
+            document.getElementById("detail").value
+        );
+
+        const darkness = Number(
+            document.getElementById("darkness").value
+        );
+
+        const contrast = Number(
+            document.getElementById("contrast").value
+        );
+
+        // 1. Grayscale conversion and image inversion
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const g =
+                0.299 * pixels[i] +
+                0.587 * pixels[i + 1] +
+                0.114 * pixels[i + 2];
+
+            gray[p] = g;
+
+            const v = 255 - g;
+            inv[i] = v;
+            inv[i + 1] = v;
+            inv[i + 2] = v;
+            inv[i + 3] = 255;
+        }
+
+        ictx.putImageData(invImage, 0, 0);
+
+        // 2. Smooth the inverted image for pencil shading
+        bctx.clearRect(0, 0, W, H);
+        bctx.filter = "blur(" + (7 - detail) + "px)";
+        bctx.drawImage(invertedCanvas, 0, 0);
+        bctx.filter = "none";
+
+        const blurred = bctx.getImageData(
+            0, 0, W, H
+        ).data;
+
+        const output = ctx.createImageData(W, H);
+        const out = output.data;
+
+        // 3. Pencil shading using color-dodge blending
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const b = blurred[i];
+
+            let shade = b >= 254.5
+                ? 255
+                : Math.min(255, gray[p] * 255 / (255 - b));
+
+            // Preserve natural midtones and dark areas
+            shade = 255 - (255 - shade) * darkness;
+
+            // Increase separation between light and dark shades
+            shade = 128 + (shade - 128) * contrast;
+
+            shade = Math.max(0, Math.min(255, shade));
+
+            out[i] = shade;
+            out[i + 1] = shade;
+            out[i + 2] = shade;
+            out[i + 3] = 255;
+        }
+
+        // 4. Strengthen fine details around eyes, nose,
+        // lips, hair and facial boundaries using Sobel edges
+        const edgeStrength = 0.45 + detail * 0.07;
+
+        for (let y = 1; y < H - 1; y++) {
+            for (let x = 1; x < W - 1; x++) {
+                const p = y * W + x;
+
+                const gx =
+                    -gray[p-W-1] + gray[p-W+1]
+                    - 2*gray[p-1] + 2*gray[p+1]
+                    - gray[p+W-1] + gray[p+W+1];
+
+                const gy =
+                    -gray[p-W-1] - 2*gray[p-W]
+                    - gray[p-W+1]
+                    + gray[p+W-1] + 2*gray[p+W]
+                    + gray[p+W+1];
+
+                const edge = Math.sqrt(gx*gx + gy*gy);
+
+                if (edge > 35) {
+                    const i = p * 4;
+                    const strength = Math.min(
+                        edgeStrength,
+                        (edge - 35) / 300
+                    );
+
+                    out[i] *= 1 - strength;
+                    out[i+1] *= 1 - strength;
+                    out[i+2] *= 1 - strength;
+                }
+            }
+        }
+
+        // 5. Add fine graphite grain to make the
+        // result look less like a simple digital filter
+        for (let p = 0, i = 0; p < total; p++, i += 4) {
+            const x = p % W;
+            const y = Math.floor(p / W);
+
+            const grain = ((x * 17 + y * 31) % 5) - 2;
+
+            const value = Math.max(
+                0, Math.min(255, out[i] + grain)
+            );
+
+            out[i] = value;
+            out[i+1] = value;
+            out[i+2] = value;
+        }
+
+        ctx.putImageData(output, 0, 0);
+        latestFrame = true;
+
+    } catch (error) {
+        statusText.textContent = "Drawing error. Please restart the camera.";
+    } finally {
+        frameBusy = false;
+    }
+
+    if (running) requestAnimationFrame(drawPencil);
+}
+
+// Start webcam
+startBtn.addEventListener("click", async () => {
+    try {
+        statusText.textContent = "Opening camera...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user",
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        statusText.textContent =
+            "Live pencil portrait is running.";
+
+        lastFrame = 0;
+        drawPencil();
+
+    } catch (error) {
+        statusText.textContent =
+            "Camera blocked. Allow camera permission and use HTTPS or localhost.";
+    }
+});
+
+// Stop camera
+stopBtn.addEventListener("click", () => {
+    running = false;
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    statusText.textContent = "Camera stopped.";
+});
+
+// Download sketch
+document.getElementById("download").addEventListener(
+    "click", () => {
+        if (!latestFrame) {
+            statusText.textContent =
+                "Start the camera first to create a drawing.";
+            return;
+        }
+
+        canvas.toBlob(blob => {
+            if (!blob) return;
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+
+            link.href = url;
+            link.download = "realistic-graphite-portrait.png";
+            link.click();
+
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, "image/png");
+    }
+);
+
+// Settings update the effect on the next live frame
+["detail", "darkness", "contrast"].forEach(id => {
+    document.getElementById(id).addEventListener("input", () => {
+        lastFrame = 0;
+    });
+});
+</script>
+
+</body>
+</html>
