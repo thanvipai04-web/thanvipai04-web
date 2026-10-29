@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realistic Pencil Portrait Maker</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #e9e6e1;
+    color: #252525;
+}
+
+header {
+    background: #241a16;
+    color: white;
+    text-align: center;
+    padding: 25px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+    font-size: 28px;
+}
+
+header p {
+    margin: 0;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 25px auto;
+    padding: 15px;
+}
+
+.controls {
+    text-align: center;
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+input[type="file"] {
+    max-width: 100%;
+    margin: 12px;
+}
+
+button {
+    padding: 12px 17px;
+    margin: 6px;
+    background: #29211d;
+    color: white;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #665047;
+}
+
+.settings {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 25px;
+    margin-top: 15px;
+}
+
+.settings label {
+    display: block;
+    font-size: 14px;
+}
+
+.settings input {
+    width: 150px;
+    display: block;
+    margin-top: 8px;
+}
+
+.gallery {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+}
+
+.panel {
+    background: white;
+    padding: 12px;
+    border-radius: 12px;
+    text-align: center;
+}
+
+.panel h2 {
+    font-size: 19px;
+}
+
+canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: #f8f7f4;
+    border: 1px solid #ddd;
+}
+
+#status {
+    color: #555;
+    font-size: 14px;
+}
+
+@media(max-width: 650px) {
+    .gallery {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 23px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>✏️ Realistic Pencil Portrait</h1>
+    <p>Turn your photo into a detailed graphite drawing</p>
+</header>
+
+<div class="container">
+
+    <div class="controls">
+        <h2>Choose Your Photo</h2>
+
+        <input type="file" id="upload"
+               accept="image/*">
+
+        <div>
+            <button id="draw">Create Pencil Drawing</button>
+            <button id="download">Download Portrait</button>
+        </div>
+
+        <div class="settings">
+            <label>
+                Pencil Detail
+                <input type="range" id="detail"
+                       min="1" max="5" value="3">
+            </label>
+
+            <label>
+                Shading Darkness
+                <input type="range" id="darkness"
+                       min="0.7" max="2" step="0.1" value="1.2">
+            </label>
+        </div>
+
+        <p id="status">Upload a clear face photo to begin.</p>
+    </div>
+
+    <div class="gallery">
+
+        <div class="panel">
+            <h2>Original Photo</h2>
+            <canvas id="original"
+                    width="500" height="600"></canvas>
+        </div>
+
+        <div class="panel">
+            <h2>Pencil Drawing</h2>
+            <canvas id="sketch"
+                    width="500" height="600"></canvas>
+        </div>
+
+    </div>
+</div>
+
+<script>
+const upload = document.getElementById("upload");
+const originalCanvas = document.getElementById("original");
+const sketchCanvas = document.getElementById("sketch");
+
+const originalCtx = originalCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const sketchCtx = sketchCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+let photo = new Image();
+let imageLoaded = false;
+
+// Upload and display photo
+upload.addEventListener("change", function() {
+    const file = this.files[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+        alert("Please select an image.");
+        return;
+    }
+
+    const url = URL.createObjectURL(file);
+
+    photo.onload = function() {
+        const maxSize = 700;
+        const scale = Math.min(
+            1,
+            maxSize / Math.max(photo.width, photo.height)
+        );
+
+        const w = Math.round(photo.width * scale);
+        const h = Math.round(photo.height * scale);
+
+        originalCanvas.width = w;
+        originalCanvas.height = h;
+        sketchCanvas.width = w;
+        sketchCanvas.height = h;
+
+        originalCtx.drawImage(photo, 0, 0, w, h);
+
+        imageLoaded = true;
+        createSketch();
+
+        document.getElementById("status").textContent =
+            "Photo loaded! Adjust detail and shading as needed.";
+
+        URL.revokeObjectURL(url);
+    };
+
+    photo.onerror = function() {
+        document.getElementById("status").textContent =
+            "Could not load this image.";
+        URL.revokeObjectURL(url);
+    };
+
+    photo.src = url;
+});
+
+// Pencil sketch processing
+function createSketch() {
+    if (!imageLoaded) {
+        alert("Please upload a photo first.");
+        return;
+    }
+
+    const w = originalCanvas.width;
+    const h = originalCanvas.height;
+
+    const original = originalCtx.getImageData(0, 0, w, h);
+    const src = original.data;
+    const count = w * h;
+
+    const gray = new Float32Array(count);
+    const invertedCanvas = document.createElement("canvas");
+
+    invertedCanvas.width = w;
+    invertedCanvas.height = h;
+
+    const invCtx = invertedCanvas.getContext("2d");
+
+    // Step 1: Convert photo to grayscale
+    for (let p = 0, i = 0; p < count; p++, i += 4) {
+        gray[p] =
+            0.299 * src[i] +
+            0.587 * src[i + 1] +
+            0.114 * src[i + 2];
+    }
+
+    // Step 2: Invert grayscale image
+    const invImage = invCtx.createImageData(w, h);
+
+    for (let p = 0, i = 0; p < count; p++, i += 4) {
+        const v = 255 - gray[p];
+
+        invImage.data[i] = v;
+        invImage.data[i + 1] = v;
+        invImage.data[i + 2] = v;
+        invImage.data[i + 3] = 255;
+    }
+
+    invCtx.putImageData(invImage, 0, 0);
+
+    // Step 3: Blur the inverted image
+    const blurCanvas = document.createElement("canvas");
+    blurCanvas.width = w;
+    blurCanvas.height = h;
+
+    const blurCtx = blurCanvas.getContext("2d", {
+        willReadFrequently: true
+    });
+
+    const detail = Number(
+        document.getElementById("detail").value
+    );
+
+    blurCtx.filter = "blur(" + (7 - detail) + "px)";
+    blurCtx.drawImage(invertedCanvas, 0, 0);
+    blurCtx.filter = "none";
+
+    const blurred = blurCtx.getImageData(0, 0, w, h).data;
+
+    // Step 4: Blend grayscale with blurred inverted image
+    const output = sketchCtx.createImageData(w, h);
+    const out = output.data;
+
+    const darkness = Number(
+        document.getElementById("darkness").value
+    );
+
+    for (let p = 0, i = 0; p < count; p++, i += 4) {
+        const b = blurred[i];
+
+        let shade = b >= 255
+            ? 255
+            : Math.min(255, gray[p] * 255 / (255 - b));
+
+        // Control contrast and pencil shading
+        shade = 255 - (255 - shade) * darkness;
+        shade = Math.max(0, Math.min(255, shade));
+
+        out[i] = shade;
+        out[i + 1] = shade;
+        out[i + 2] = shade;
+        out[i + 3] = 255;
+    }
+
+    // Step 5: Detect facial details and object edges
+    for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+            const p = y * w + x;
+
+            const gx =
+                -gray[p - w - 1] + gray[p - w + 1]
+                - 2 * gray[p - 1] + 2 * gray[p + 1]
+                - gray[p + w - 1] + gray[p + w + 1];
+
+            const gy =
+                -gray[p - w - 1] - 2 * gray[p - w]
+                - gray[p - w + 1]
+                + gray[p + w - 1] + 2 * gray[p + w]
+                + gray[p + w + 1];
+
+            const edge = Math.sqrt(gx * gx + gy * gy);
+
+            if (edge > 100) {
+                const i = p * 4;
+                const strength = Math.min(
+                    0.65,
+                    (edge - 100) / 350
+                );
+
+                out[i] *= 1 - strength;
+                out[i + 1] *= 1 - strength;
+                out[i + 2] *= 1 - strength;
+            }
+        }
+    }
+
+    // Step 6: Add fine graphite texture
+    // Keep the texture subtle to preserve facial detail
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const i = (y * w + x) * 4;
+
+            const grain = ((x * 17 + y * 31) % 7) - 3;
+            const shade = Math.max(
+                0,
+                Math.min(255, out[i] + grain)
+            );
+
+            out[i] = shade;
+            out[i + 1] = shade;
+            out[i + 2] = shade;
+        }
+    }
+
+    sketchCtx.putImageData(output, 0, 0);
+
+    document.getElementById("status").textContent =
+        "Pencil portrait created successfully!";
+}
+
+// Recreate drawing when settings change
+document.getElementById("draw").addEventListener(
+    "click", createSketch
+);
+
+document.getElementById("detail").addEventListener(
+    "input", createSketch
+);
+
+document.getElementById("darkness").addEventListener(
+    "input", createSketch
+);
+
+// Download the finished pencil portrait
+document.getElementById("download").addEventListener(
+    "click", function() {
+        if (!imageLoaded) {
+            alert("Upload a photo first.");
+            return;
+        }
+
+        sketchCanvas.toBlob(function(blob) {
+            if (!blob) return;
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+
+            link.href = url;
+            link.download = "realistic-pencil-portrait.png";
+            link.click();
+
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, "image/png");
+    }
+);
+</script>
+
+</body>
+</html>
