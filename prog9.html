@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realistic Pencil Sketch Studio</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #edf0f2;
+    color: #202630;
+}
+
+header {
+    background: #241812;
+    color: white;
+    text-align: center;
+    padding: 24px 12px;
+}
+
+header h1 {
+    margin: 0 0 10px;
+}
+
+header p {
+    margin: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: auto;
+    padding: 20px;
+}
+
+.panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.panel {
+    background: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px #00000012;
+    min-width: 0;
+}
+
+.panel h2 {
+    text-align: center;
+}
+
+.preview {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    background: #faf9f6;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    overflow: hidden;
+}
+
+video, canvas, #photoPreview {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+}
+
+#photoPreview {
+    display: none;
+}
+
+.buttons {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+button, .uploadButton {
+    background: #159bd0;
+    color: white;
+    padding: 12px 16px;
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+button:hover, .uploadButton:hover {
+    background: #0879aa;
+}
+
+button:disabled {
+    background: #9ca7ad;
+    cursor: not-allowed;
+}
+
+#photoInput {
+    display: none;
+}
+
+.settings {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+}
+
+.settings label {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.settings input {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    accent-color: #159bd0;
+}
+
+#status {
+    text-align: center;
+    color: #555;
+    overflow-wrap: anywhere;
+}
+
+@media(max-width: 700px) {
+    .panels, .settings {
+        grid-template-columns: 1fr;
+    }
+
+    header h1 {
+        font-size: 24px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>✏️ Realistic Pencil Sketch Studio</h1>
+    <p>Upload a photo or use your live webcam to create a pencil drawing</p>
+</header>
+
+<main class="container">
+
+<div class="panels">
+
+    <section class="panel">
+        <h2>Original Image / Webcam</h2>
+        <div class="preview">
+            <video id="video" autoplay muted playsinline></video>
+            <img id="photoPreview" alt="Uploaded photograph">
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Pencil Drawing</h2>
+        <div class="preview">
+            <canvas id="sketch" width="480" height="360"></canvas>
+        </div>
+    </section>
+
+</div>
+
+<div class="buttons">
+    <label class="uploadButton" for="photoInput">
+        Upload Picture
+    </label>
+    <input type="file" id="photoInput" accept="image/*">
+
+    <button id="start">Start Camera</button>
+    <button id="stop" disabled>Stop Camera</button>
+    <button id="download">Download Drawing</button>
+</div>
+
+<div class="settings">
+    <label>
+        Pencil Detail
+        <input id="detail" type="range"
+               min="1" max="5" value="4">
+    </label>
+
+    <label>
+        Hair / Dark Shading
+        <input id="hair" type="range"
+               min="0" max="1" step="0.05" value="0.65">
+    </label>
+
+    <label>
+        Pencil Contrast
+        <input id="contrast" type="range"
+               min="0.5" max="1.5" step="0.1" value="0.8">
+    </label>
+</div>
+
+<p id="status">Upload a picture or click Start Camera.</p>
+
+</main>
+
+<script>
+const video = document.getElementById("video");
+const photoPreview = document.getElementById("photoPreview");
+const photoInput = document.getElementById("photoInput");
+const canvas = document.getElementById("sketch");
+const ctx = canvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const W = canvas.width;
+const H = canvas.height;
+
+const source = document.createElement("canvas");
+source.width = W;
+source.height = H;
+
+const sctx = source.getContext("2d", {
+    willReadFrequently: true
+});
+
+const invertedCanvas = document.createElement("canvas");
+invertedCanvas.width = W;
+invertedCanvas.height = H;
+
+const ictx = invertedCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const blurCanvas = document.createElement("canvas");
+blurCanvas.width = W;
+blurCanvas.height = H;
+
+const bctx = blurCanvas.getContext("2d", {
+    willReadFrequently: true
+});
+
+const startBtn = document.getElementById("start");
+const stopBtn = document.getElementById("stop");
+const statusText = document.getElementById("status");
+
+let stream = null;
+let running = false;
+let busy = false;
+let lastFrame = 0;
+let hasDrawing = false;
+let uploadedImage = null;
+let photoURL = null;
+let animationId = null;
+
+// Fit any image into the drawing area without stretching it
+function drawFitted(context, image) {
+    const iw = image.videoWidth || image.naturalWidth || image.width;
+    const ih = image.videoHeight || image.naturalHeight || image.height;
+
+    if (!iw || !ih) return;
+
+    const scale = Math.min(W / iw, H / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const dx = (W - dw) / 2;
+    const dy = (H - dh) / 2;
+
+    context.clearRect(0, 0, W, H);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, W, H);
+    context.drawImage(image, dx, dy, dw, dh);
+}
+
+// Process the current image into a pencil sketch
+function makeSketch() {
+    sctx.drawImage(source, 0, 0, W, H);
+
+    const image = sctx.getImageData(0, 0, W, H);
+    const pixels = image.data;
+    const total = W * H;
+    const gray = new Float32Array(total);
+    const inverted = ictx.createImageData(W, H);
+    const inv = inverted.data;
+
+    const detail = Number(
+        document.getElementById("detail").value
+    );
+
+    const hairDarkness = Number(
+        document.getElementById("hair").value
+    );
+
+    const contrast = Number(
+        document.getElementById("contrast").value
+    );
+
+    // 1. Grayscale and inverted image
+    for (let p = 0, i = 0; p < total; p++, i += 4) {
+        const g =
+            0.299 * pixels[i] +
+            0.587 * pixels[i + 1] +
+            0.114 * pixels[i + 2];
+
+        gray[p] = g;
+
+        const v = 255 - g;
+        inv[i] = v;
+        inv[i + 1] = v;
+        inv[i + 2] = v;
+        inv[i + 3] = 255;
+    }
+
+    ictx.putImageData(inverted, 0, 0);
+
+    // 2. Smooth pencil shading
+    bctx.clearRect(0, 0, W, H);
+    bctx.filter = "blur(" + (7 - detail) + "px)";
+    bctx.drawImage(invertedCanvas, 0, 0);
+    bctx.filter = "none";
+
+    const blurred = bctx.getImageData(
+        0, 0, W, H
+    ).data;
+
+    const output = ctx.createImageData(W, H);
+    const out = output.data;
+
+    // 3. Soft graphite shades
+    for (let p = 0, i = 0; p < total; p++, i += 4) {
+        const b = blurred[i];
+
+        let shade = b >= 254.5
+            ? 255
+            : Math.min(255, gray[p] * 255 / (255 - b));
+
+        shade = 255 - (255 - shade) * 0.42;
+        shade = 190 + (shade - 190) * contrast * 0.65;
+
+        shade = Math.max(0, Math.min(255, shade));
+
+        out[i] = shade;
+        out[i + 1] = shade;
+        out[i + 2] = shade;
+        out[i + 3] = 255;
+    }
+
+    // 4. Deepen naturally dark areas
+    for (let p = 0, i = 0; p < total; p++, i += 4) {
+        if (gray[p] < 110) {
+            const amount = (110 - gray[p]) / 110;
+            const strength = hairDarkness * amount * 0.55;
+            const shade = out[i] * (1 - strength);
+
+            out[i] = shade;
+            out[i + 1] = shade;
+            out[i + 2] = shade;
+        }
+    }
+
+    // 5. Add fine details to facial features and hair
+    const edgeStrength = 0.12 + detail * 0.025;
+
+    for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+            const p = y * W + x;
+
+            const gx =
+                -gray[p-W-1] + gray[p-W+1]
+                - 2 * gray[p-1] + 2 * gray[p+1]
+                - gray[p+W-1] + gray[p+W+1];
+
+            const gy =
+                -gray[p-W-1] - 2 * gray[p-W]
+                - gray[p-W+1]
+                + gray[p+W-1] + 2 * gray[p+W]
+                + gray[p+W+1];
+
+            const edge = Math.sqrt(gx * gx + gy * gy);
+
+            if (edge > 55) {
+                const i = p * 4;
+                const strength = Math.min(
+                    edgeStrength, (edge - 55) / 600
+                );
+
+                out[i] *= 1 - strength;
+                out[i + 1] *= 1 - strength;
+                out[i + 2] *= 1 - strength;
+            }
+        }
+    }
+
+    // 6. Subtle pencil texture
+    for (let p = 0, i = 0; p < total; p++, i += 4) {
+        const x = p % W;
+        const y = Math.floor(p / W);
+        const grain = ((x * 17 + y * 31) % 5) - 2;
+
+        const v = Math.max(0, Math.min(255, out[i] + grain));
+
+        out[i] = v;
+        out[i + 1] = v;
+        out[i + 2] = v;
+    }
+
+    ctx.putImageData(output, 0, 0);
+    hasDrawing = true;
+}
+
+// Process uploaded photo
+function processUploadedPhoto() {
+    if (!uploadedImage) return;
+
+    drawFitted(sourceCtx, uploadedImage);
+    makeSketch();
+
+    statusText.textContent =
+        "Uploaded picture converted into a pencil sketch.";
+}
+
+// Upload picture
+photoInput.addEventListener("change", () => {
+    const file = photoInput.files[0];
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+        statusText.textContent = "Please select an image file.";
+        return;
+    }
+
+    if (photoURL) URL.revokeObjectURL(photoURL);
+
+    photoURL = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+        uploadedImage = img;
+
+        stopCamera(false);
+
+        video.style.display = "none";
+        photoPreview.style.display = "block";
+        photoPreview.src = photoURL;
+
+        processUploadedPhoto();
+    };
+
+    img.onerror = () => {
+        statusText.textContent = "Unable to open this picture.";
+        URL.revokeObjectURL(photoURL);
+        photoURL = null;
+    };
+
+    img.src = photoURL;
+});
+
+// Start webcam
+startBtn.addEventListener("click", async () => {
+    try {
+        stopCamera(false);
+
+        uploadedImage = null;
+        photoPreview.style.display = "none";
+        video.style.display = "block";
+
+        statusText.textContent = "Requesting camera permission...";
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                facingMode: "user",
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            },
+            audio: false
+        });
+
+        video.srcObject = stream;
+        await video.play();
+
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        statusText.textContent = "Live pencil drawing is running.";
+        lastFrame = 0;
+        drawLive();
+
+    } catch (error) {
+        running = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+
+        statusText.textContent =
+            "Allow camera access and use HTTPS or localhost.";
+    }
+});
+
+// Live drawing loop
+function drawLive() {
+    if (!running) return;
+
+    if (video.readyState >= 2 &&
+        !busy &&
+        performance.now() - lastFrame >= 100) {
+
+        lastFrame = performance.now();
+        busy = true;
+
+        try {
+            drawFitted(sourceCtx, video);
+            makeSketch();
+        } catch (error) {
+            statusText.textContent = "Unable to process webcam.";
+        } finally {
+            busy = false;
+        }
+    }
+
+    if (running) {
+        animationId = requestAnimationFrame(drawLive);
+    }
+}
+
+// Stop webcam; preserve current drawing
+function stopCamera(updateStatus = true) {
+    running = false;
+    cancelAnimationFrame(animationId);
+
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+    }
+
+    video.srcObject = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    if (updateStatus) {
+        statusText.textContent = "Camera stopped.";
+    }
+}
+
+stopBtn.addEventListener("click", () => {
+    stopCamera(true);
+});
+
+// Download pencil drawing
+document.getElementById("download").addEventListener(
+    "click", () => {
+        if (!hasDrawing) {
+            statusText.textContent =
+                "Upload a picture or start the camera first.";
+            return;
+        }
+
+        canvas.toBlob(blob => {
+            if (!blob) {
+                statusText.textContent = "Download failed.";
+                return;
+            }
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+
+            link.href = url;
+            link.download = "pencil-portrait.png";
+            link.click();
+
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, "image/png");
+    }
+);
+
+// Reprocess uploaded images when settings change
+["detail", "hair", "contrast"].forEach(id => {
+    document.getElementById(id).addEventListener("input", () => {
+        if (uploadedImage && !running) {
+            processUploadedPhoto();
+        }
+    });
+});
+
+// Release the temporary image URL when leaving the page
+window.addEventListener("beforeunload", () => {
+    if (photoURL) URL.revokeObjectURL(photoURL);
+});
+</script>
+
+</body>
+</html>
