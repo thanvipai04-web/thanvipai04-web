@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pencil Sketch Studio</title>
+
+<style>
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f1eee8;
+  color: #292522;
+  text-align: center;
+}
+
+header {
+  background: #292522;
+  color: white;
+  padding: 22px 10px;
+}
+
+header h1 { margin: 0 0 8px; }
+
+main {
+  max-width: 1100px;
+  margin: auto;
+  padding: 16px;
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.panel, .settings {
+  background: white;
+  padding: 14px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: white;
+  border: 1px solid #ddd;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+button, .upload {
+  background: #925a55;
+  color: white;
+  padding: 11px 15px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+button:hover, .upload:hover {
+  background: #71423e;
+}
+
+.setting {
+  max-width: 600px;
+  margin: 16px auto;
+  text-align: left;
+}
+
+.setting label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+input[type="range"] { width: 100%; }
+
+#status {
+  overflow-wrap: anywhere;
+  color: #71423e;
+}
+
+@media (max-width: 650px) {
+  .panels { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+
+<body>
+<header>
+  <h1>✏️ Pencil Sketch Studio</h1>
+  <p>Turn your photo into pencil art</p>
+</header>
+
+<main>
+  <div class="panels">
+    <section class="panel">
+      <h3>Original Image</h3>
+      <canvas id="original" width="640" height="480"></canvas>
+    </section>
+
+    <section class="panel">
+      <h3>Pencil Sketch</h3>
+      <canvas id="sketch" width="640" height="480"></canvas>
+    </section>
+  </div>
+
+  <div class="buttons">
+    <label class="upload">
+      Upload Picture
+      <input id="file" type="file" accept="image/*" hidden>
+    </label>
+    <button id="start">Start Webcam</button>
+    <button id="stop">Stop Webcam</button>
+    <button id="download">Download Sketch</button>
+  </div>
+
+  <video id="video" autoplay playsinline muted hidden></video>
+
+  <section class="settings">
+    <h3>Sketch Settings</h3>
+
+    <div class="setting">
+      <label>Shading Strength <span id="shadeVal">65%</span></label>
+      <input id="shade" type="range" min="10" max="100" value="65">
+    </div>
+
+    <div class="setting">
+      <label>Hair & Shadow Darkness <span id="darkVal">70%</span></label>
+      <input id="dark" type="range" min="10" max="100" value="70">
+    </div>
+
+    <div class="setting">
+      <label>Outline Detail <span id="detailVal">65%</span></label>
+      <input id="detail" type="range" min="10" max="100" value="65">
+    </div>
+
+    <div class="setting">
+      <label>Pencil Texture <span id="textureVal">25%</span></label>
+      <input id="texture" type="range" min="0" max="100" value="25">
+    </div>
+
+    <p id="status">Upload a photo or start the webcam.</p>
+  </section>
+</main>
+
+<script>
+const W = 640, H = 480;
+
+const original = document.getElementById("original");
+const sketch = document.getElementById("sketch");
+const octx = original.getContext("2d", { willReadFrequently: true });
+const sctx = sketch.getContext("2d", { willReadFrequently: true });
+const video = document.getElementById("video");
+const statusText = document.getElementById("status");
+
+const grayCanvas = document.createElement("canvas");
+grayCanvas.width = W;
+grayCanvas.height = H;
+const gctx = grayCanvas.getContext("2d", { willReadFrequently: true });
+
+const blurCanvas = document.createElement("canvas");
+blurCanvas.width = W;
+blurCanvas.height = H;
+const bctx = blurCanvas.getContext("2d", { willReadFrequently: true });
+
+let stream = null;
+let cameraActive = false;
+let animationId = null;
+let hasImage = false;
+let lastFrameTime = 0;
+
+function drawFit(ctx, image) {
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
+
+  const iw = image.videoWidth || image.naturalWidth || image.width;
+  const ih = image.videoHeight || image.naturalHeight || image.height;
+
+  if (!iw || !ih) return;
+
+  const scale = Math.min(W / iw, H / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+
+  ctx.drawImage(image, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
+function makeSketch() {
+  const shade = Number(document.getElementById("shade").value) / 100;
+  const darkness = Number(document.getElementById("dark").value) / 100;
+  const detail = Number(document.getElementById("detail").value) / 100;
+  const texture = Number(document.getElementById("texture").value) / 100;
+
+  const source = octx.getImageData(0, 0, W, H);
+  const src = source.data;
+  const grayData = gctx.createImageData(W, H);
+  const gray = grayData.data;
+
+  // Convert the photograph to grayscale.
+  for (let i = 0; i < src.length; i += 4) {
+    const value =
+      0.299 * src[i] +
+      0.587 * src[i + 1] +
+      0.114 * src[i + 2];
+
+    gray[i] = gray[i + 1] = gray[i + 2] = value;
+    gray[i + 3] = 255;
+  }
+
+  gctx.putImageData(grayData, 0, 0);
+
+  // Blur the grayscale image for the pencil-shading effect.
+  bctx.clearRect(0, 0, W, H);
+  bctx.filter = "blur(4px)";
+  bctx.drawImage(grayCanvas, 0, 0);
+  bctx.filter = "none";
+
+  const blurred = bctx.getImageData(0, 0, W, H).data;
+  const output = sctx.createImageData(W, H);
+  const out = output.data;
+
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = (y * W + x) * 4;
+      const value = gray[i];
+
+      // Correct color-dodge pencil shading.
+      const softGray = Math.max(1, blurred[i]);
+      let pencil = Math.min(255, value * 255 / softGray);
+
+      // Find edges to draw outlines around facial features and hair.
+      const left = gray[i - 4];
+      const right = gray[i + 4];
+      const up = gray[i - W * 4];
+      const down = gray[i + W * 4];
+
+      const edge = Math.min(
+        1,
+        (Math.abs(left - right) + Math.abs(up - down)) / 100
+      );
+
+      pencil -= edge * detail * 125;
+
+      // Darken naturally dark parts of the photograph.
+      const shadow = Math.max(0, (145 - value) / 145);
+      pencil -= shadow * darkness * 45;
+
+      // Blend the pencil effect with the original tones.
+      let finalValue = value * (1 - shade) + pencil * shade;
+
+      // Add subtle pencil-paper grain.
+      finalValue += (Math.random() - 0.5) * texture * 18;
+
+      finalValue = Math.max(0, Math.min(255, finalValue));
+
+      out[i] = out[i + 1] = out[i + 2] = finalValue;
+      out[i + 3] = 255;
+    }
+  }
+
+  // Fill border pixels.
+  for (let x = 0; x < W; x++) {
+    for (const y of [0, H - 1]) {
+      const i = (y * W + x) * 4;
+      out[i] = out[i + 1] = out[i + 2] = gray[i];
+      out[i + 3] = 255;
+    }
+  }
+
+  for (let y = 0; y < H; y++) {
+    for (const x of [0, W - 1]) {
+      const i = (y * W + x) * 4;
+      out[i] = out[i + 1] = out[i + 2] = gray[i];
+      out[i + 3] = 255;
+    }
+  }
+
+  sctx.putImageData(output, 0, 0);
+}
+
+function stopCamera() {
+  cameraActive = false;
+
+  if (animationId !== null) {
+    cancelAnimationFrame(animationId);
+    animationId = null;
+  }
+
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+
+  video.srcObject = null;
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia) {
+    statusText.textContent =
+      "Camera requires HTTPS or localhost. Open this page using a secure website or local server.";
+    return;
+  }
+
+  try {
+    stopCamera();
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" },
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    cameraActive = true;
+    hasImage = true;
+    statusText.textContent = "Webcam is running.";
+    drawLive();
+  } catch (error) {
+    stopCamera();
+    statusText.textContent =
+      "Camera error: " + error.name +
+      ". Allow camera permission and close other camera apps.";
+  }
+}
+
+function drawLive() {
+  if (!cameraActive) return;
+
+  // Limit processing to around 12 frames per second.
+  const now = performance.now();
+
+  if (now - lastFrameTime > 80 && video.readyState >= 2) {
+    lastFrameTime = now;
+    drawFit(octx, video);
+    makeSketch();
+  }
+
+  animationId = requestAnimationFrame(drawLive);
+}
+
+document.getElementById("file").addEventListener("change", event => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  stopCamera();
+
+  const image = new Image();
+  const imageUrl = URL.createObjectURL(file);
+
+  image.onload = () => {
+    drawFit(octx, image);
+    hasImage = true;
+    makeSketch();
+    statusText.textContent = "Pencil sketch created!";
+    URL.revokeObjectURL(imageUrl);
+  };
+
+  image.onerror = () => {
+    statusText.textContent = "Could not open this photo. Try another image.";
+    URL.revokeObjectURL(imageUrl);
+  };
+
+  image.src = imageUrl;
+});
+
+document.getElementById("start").addEventListener("click", startCamera);
+document.getElementById("stop").addEventListener("click", () => {
+  stopCamera();
+  statusText.textContent = "Webcam stopped.";
+});
+
+document.getElementById("download").addEventListener("click", () => {
+  if (!hasImage) {
+    statusText.textContent = "Upload a photo or start the webcam first.";
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.download = "pencil-sketch.png";
+  link.href = sketch.toDataURL("image/png");
+  link.click();
+});
+
+const settings = [
+  ["shade", "shadeVal"],
+  ["dark", "darkVal"],
+  ["detail", "detailVal"],
+  ["texture", "textureVal"]
+];
+
+settings.forEach(([sliderId, labelId]) => {
+  document.getElementById(sliderId).addEventListener("input", event => {
+    document.getElementById(labelId).textContent =
+      event.target.value + "%";
+
+    if (hasImage && !cameraActive) {
+      makeSketch();
+    }
+  });
+});
+
+// Display a blank white canvas until an image is loaded.
+octx.fillStyle = "#ffffff";
+octx.fillRect(0, 0, W, H);
+sctx.fillStyle = "#ffffff";
+sctx.fillRect(0, 0, W, H);
+</script>
+</body>
+</html>
